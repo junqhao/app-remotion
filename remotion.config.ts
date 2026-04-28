@@ -9,3 +9,6 @@ import { enableTailwind } from '@remotion/tailwind-v4';
 Config.setVideoImageFormat("jpeg");
 Config.setOverwriteOutput(true);
 Config.overrideWebpackConfig(enableTailwind);
+
+// M1 Mac WebGL 配置
+Config.setChromiumOpenGlRenderer("angle");
