@@ -2,7 +2,7 @@ import { ThreeCanvas } from "@remotion/three";
 import { useVideoConfig, useCurrentFrame, interpolate, spring } from "remotion";
 import { PhoneModel } from "./PhoneModel";
 import { IPadModel } from "./iPadModel";
-import { Suspense, useEffect, useMemo } from "react";
+import { Suspense, useEffect } from "react";
 import { Environment } from "@react-three/drei";
 import { EffectComposer, BrightnessContrast } from "@react-three/postprocessing";
 import { useThree } from "@react-three/fiber";
@@ -10,134 +10,234 @@ import { useThree } from "@react-three/fiber";
 import * as THREE from "three";
 
 interface SceneProps {
-  screenshot1: string;
-  screenshot2: string;
-  screenshot3: string;
-  screenshot4: string;
-  screenshot5: string;
+  screenshots: string[]; // 截图数组，在 keyframes 中用 index 引用
 }
 
-// 模型缩放配置
+// ============================================
+// 1. 基础配置
+// ============================================
+
 const PHONE_SCALE = 10;
 const IPAD_SCALE = 1;
 
-// Spring 配置：高刚度，高阻尼，模拟 Apple 的精密感
+// Spring 配置
 const SPRING_CONFIG = {
-  stiffness: 60,
-  damping: 12,
-  mass: 0.8,
+  stiffness: 70,
+  damping: 15,
+  mass: 0.6,
 };
 
-// 色调映射设置
+// ============================================
+// 2. 关键帧配置 - 在这里设置每个时间点的状态
+// ============================================
+// 每个关键帧包含：
+// - frame: 时间点（帧数）
+// - pos: [x, y, z] 位置
+// - rot: [x, y, z] 旋转（弧度）
+// - scale: 缩放
+// - screenshot: 使用哪张截图 (0-5)
+
+export const KEYFRAMES = [
+  // 第0帧：起始位置 - 从屏幕下方滑入
+  {
+    frame: 0,
+    pos: [0, -1, 0],
+    rot: [-3, 0, 0],
+    scale: 5,
+    screenshot: 0,
+  },
+  // 第30帧：到达正中
+  {
+    frame: 45,
+    pos: [0, -0.02, 0],
+    rot: [0, 0, 0],
+    scale: 1,
+    screenshot: 0,
+  },
+  // 第90帧：侧转展示
+  {
+    frame: 90,
+    pos: [0.6, -0.02, 1],
+    rot: [0, -Math.PI / 8, 0],
+    scale: 0.8,
+    screenshot: 1,
+  },
+  // 第150帧：倾斜展示
+  {
+    frame: 150,
+    pos: [-0.6, -0.02, 1],
+    rot: [0.1, Math.PI / 8, 0],
+    scale: 0.8,
+    screenshot: 2,
+  },
+  // 第210帧：俯视展示
+  {
+    frame: 210,
+    pos: [-0.5, -0.02, 2],
+    rot: [0, 0, 0],
+    scale: 0.6,
+    screenshot: 3,
+  },
+  // 第270帧：缩小让位给iPad
+  {
+    frame: 270,
+    pos: [1.2, -0.3, 0],
+    rot: [0, -Math.PI / 6, 0],
+    scale: 0.6,
+    screenshot: 4,
+  },
+];
+
+ // ============================================
+// 3. iPad 关键帧配置
+// ============================================
+
+const IPAD_KEYFRAMES = [
+  // 第240帧：从屏幕左侧外开始
+  {
+    frame: 210,
+    pos: [100, -38, -250],
+    rot: [0, Math.PI / 6, 0],
+    scale: 1,
+    screenshot: 5, // 使用 screenshots[5]
+  },  
+  // 第330帧：保持
+  {
+    frame: 270,
+    pos: [30, -38, -250],
+    rot: [0, Math.PI / 12, 0],
+    scale: 1,
+    screenshot: 5,
+  },
+];
+
+// ============================================
+// 4. 动画细节配置
+// ============================================
+
+const FLOAT_SPEED = 30;
+const FLOAT_AMPLITUDE = 0;
+
+// 色调映射
 function ToneMapping() {
   const { gl } = useThree();
-
   useEffect(() => {
     gl.toneMapping = THREE.ACESFilmicToneMapping;
     gl.toneMappingExposure = 0.8;
   }, [gl]);
-
   return null;
 }
 
+// ============================================
+// 关键帧插值函数 - 支持 iPhone 和 iPad 关键帧
+// ============================================
+interface KeyframeBase {
+  frame: number;
+  pos: number[];
+  rot: number[];
+  scale: number;
+}
 
+interface KeyframeWithScreenshot extends KeyframeBase {
+  screenshot: number;
+}
 
-// 5 个分镜的目标状态
-const SHOT_TARGETS = [
-  { pos: [0, 0, 0], rot: [0, 0, 0], scale: 1 },         // 分镜1: 悦见于色
-  { pos: [0.5, 0, 1], rot: [0, -Math.PI / 8, 0], scale: 1.1 }, // 分镜2: 万物色彩
-  { pos: [-0.5, 0.2, 0], rot: [0.2, 0.4, 0], scale: 0.9 }, // 分镜3: 即刻获取
-  { pos: [0, -0.2, 2], rot: [Math.PI / 10, 0, 0], scale: 1.2 }, // 分镜4: iCloud
-  { pos: [-1.5, 0, 0], rot: [0, Math.PI / 6, 0], scale: 0.7 }, // 分镜5: 和 iPad 一起
-];
+type Keyframe = KeyframeBase | KeyframeWithScreenshot;
 
-// 截图映射
-const SCREENSHOT_MAP = [0, 1, 2, 3, 0]; // 分镜1-4用screenshot1-4，分镜5用screenshot1
+function getInterpolatedValue(frame: number, keyframes: Keyframe[]) {
+  // 找到当前帧应该使用哪个关键帧的状态
+  let currentIndex = 0;
+  for (let i = keyframes.length - 1; i >= 0; i--) {
+    if (frame >= keyframes[i].frame) {
+      currentIndex = i;
+      break;
+    }
+  }
 
-export const Scene: React.FC<SceneProps> = ({
-  screenshot1,
-  screenshot2,
-  screenshot3,
-  screenshot4,
-  screenshot5,
-}) => {
+  const current = keyframes[currentIndex];
+  const next = keyframes[Math.min(currentIndex + 1, keyframes.length - 1)];
+
+  // 如果已经在最后一个关键帧，直接返回
+  if (currentIndex === keyframes.length - 1) {
+    const result: any = {
+      pos: current.pos as [number, number, number],
+      rot: current.rot as [number, number, number],
+      scale: current.scale,
+    };
+    if ('screenshot' in current) {
+      result.screenshot = current.screenshot;
+    }
+    return result;
+  }
+
+  // 计算在当前区间内的进度 (0-1)
+  const duration = next.frame - current.frame;
+  const progress = duration > 0 ? (frame - current.frame) / duration : 0;
+
+  // 使用 spring 动画
+  const springValue = spring({
+    frame: progress * duration,
+    fps: 30,
+    config: SPRING_CONFIG,
+  });
+  const t = interpolate(springValue, [0, 1], [0, 1]);
+
+  const result: any = {
+    pos: [
+      interpolate(t, [0, 1], [current.pos[0], next.pos[0]]),
+      interpolate(t, [0, 1], [current.pos[1], next.pos[1]]),
+      interpolate(t, [0, 1], [current.pos[2], next.pos[2]]),
+    ] as [number, number, number],
+    rot: [
+      interpolate(t, [0, 1], [current.rot[0], next.rot[0]]),
+      interpolate(t, [0, 1], [current.rot[1], next.rot[1]]),
+      interpolate(t, [0, 1], [current.rot[2], next.rot[2]]),
+    ] as [number, number, number],
+    scale: interpolate(t, [0, 1], [current.scale, next.scale]),
+  };
+
+  // 处理 screenshot - 动画一开始就切换，不滞后
+  if ('screenshot' in current && 'screenshot' in next) {
+    // 动画开始时立即切换到下一个截图，和位置/旋转同步
+    result.screenshot = (next as KeyframeWithScreenshot).screenshot;
+  }
+
+  return result;
+}
+
+// ============================================
+// 主组件
+// ============================================
+
+export const Scene: React.FC<SceneProps> = ({ screenshots }) => {
   const { width, height, fps } = useVideoConfig();
   const frame = useCurrentFrame();
 
-  const screenshots = [screenshot1, screenshot2, screenshot3, screenshot4, screenshot5];
+  // 获取 iPhone 当前帧的插值状态
+  const { pos, rot, scale, screenshot } = getInterpolatedValue(frame, KEYFRAMES);
 
-  // 计算当前分镜（基于时间）
-  const shotDuration = 60; // 每分镜60帧
-  const totalShots = 5;
-  
-  // 使用 spring 产生平滑的分镜过渡
-  const shotProgress = frame / shotDuration;
-  const currentShotIndex = Math.min(Math.floor(shotProgress), totalShots - 1);
-  const nextShotIndex = Math.min(currentShotIndex + 1, totalShots - 1);
-  const localProgress = shotProgress - currentShotIndex;
-
-  // Spring 驱动的过渡
-  const transitionSpring = spring({
-    frame: frame % shotDuration,
-    fps,
-    config: SPRING_CONFIG,
-  });
-
-  // 平滑插值当前和目标状态
-  const t = interpolate(transitionSpring, [0, 1], [0, 1]);
-  
-  const currentTarget = SHOT_TARGETS[currentShotIndex];
-  const nextTarget = SHOT_TARGETS[nextShotIndex];
-
-  // 位置插值（带微浮动）
-  const drift = Math.sin(frame / 30) * 0.05;
+  // 添加微浮动
+  const floatOffset = Math.sin(frame / FLOAT_SPEED) * FLOAT_AMPLITUDE;
   const position: [number, number, number] = [
-    interpolate(t, [0, 1], [currentTarget.pos[0], nextTarget.pos[0]]) + drift * 0.5,
-    interpolate(t, [0, 1], [currentTarget.pos[1], nextTarget.pos[1]]) + drift,
-    interpolate(t, [0, 1], [currentTarget.pos[2], nextTarget.pos[2]]),
+    pos[0] + floatOffset * 0.5,
+    pos[1] + floatOffset,
+    pos[2],
   ];
 
-  // 旋转插值
-  const rotation: [number, number, number] = [
-    interpolate(t, [0, 1], [currentTarget.rot[0], nextTarget.rot[0]]),
-    interpolate(t, [0, 1], [currentTarget.rot[1], nextTarget.rot[1]]),
-    interpolate(t, [0, 1], [currentTarget.rot[2], nextTarget.rot[2]]),
+  // iPad 动画 - 使用关键帧插值
+  const showIPad = frame >= IPAD_KEYFRAMES[0].frame;
+  const ipadState = getInterpolatedValue(frame, IPAD_KEYFRAMES);
+  const ipadPosition: [number, number, number] = [
+    ipadState.pos[0],
+    ipadState.pos[1],
+    ipadState.pos[2],
   ];
-
-  // 缩放插值（带弹性回弹）
-  const scaleSpring = spring({
-    frame: frame % shotDuration,
-    fps,
-    config: { ...SPRING_CONFIG, stiffness: 80 },
-  });
-  const scaleT = interpolate(scaleSpring, [0, 1], [0, 1]);
-  const scale = interpolate(scaleT, [0, 1], [currentTarget.scale, nextTarget.scale]);
-
-  // 截图切换：在动作最剧烈的瞬间（spring 中间值）切换
-  const screenshotIndex = SCREENSHOT_MAP[currentShotIndex];
-  const currentScreenshot = screenshots[screenshotIndex];
-
-  // iPad 在第 5 分镜：从屏幕左侧水平滑入
-  const ipadStartFrame = 240;
-  const showIPad = frame >= ipadStartFrame;
-
-  // iPad 路径：从屏幕左侧水平滑入到右侧
-  const ipadFrame = Math.max(0, frame - ipadStartFrame);
-  const ipadSpring = spring({
-    frame: ipadFrame,
-    fps,
-    config: { ...SPRING_CONFIG, stiffness: 40, damping: 10 },
-  });
-  const ipadProgress = interpolate(ipadSpring, [0, 1], [0, 1]);
-  const ipadX = interpolate(ipadProgress, [0, 1], [-8, 2.5]);
-  const ipadY = -40; // 保持原来的 y
-  const ipadZ = -250; // 保持原来的深度
-  const ipadScale = 1; // 保持原来的 scale
 
   return (
     <ThreeCanvas
       width={width}
       height={height}
+      dpr={[1, 3]}
       camera={{ position: [0, 0, 5], fov: 20 }}
       gl={{
         antialias: true,
@@ -148,46 +248,37 @@ export const Scene: React.FC<SceneProps> = ({
     >
       <ToneMapping />
 
+      {/* 方向光和其他光源已注释，只用环境光
+      <ambientLight intensity={0.3} />
+      <directionalLight position={[-5, 5, 5]} intensity={0.8} castShadow />
+      <pointLight position={[5, 3, -5]} intensity={0.2} />
+      <pointLight position={[-5, -3, -5]} intensity={0.2} />
+      */}
+      <Environment preset="studio" />
 
-      {/* 环境光 */}
-      <ambientLight intensity={0.2} />
-
-      {/* 主光源 */}
-      <directionalLight position={[5, 5, 5]} intensity={0.8} castShadow />
-
-      {/* 补光 - 中性白色 */}
-      <pointLight position={[-5, 3, -5]} intensity={0.3} />
-      <pointLight position={[5, -3, -5]} intensity={0.2} />
-
-      {/* iPhone 模型 */}
       <Suspense fallback={null}>
         <PhoneModel
-          screenshot={currentScreenshot}
+          screenshot={screenshots[screenshot]}
           scale={PHONE_SCALE * scale}
           position={position}
-          rotation={rotation}
+          rotation={rot as [number, number, number]}
         />
       </Suspense>
 
-      {/* iPad 模型 - 第 5 分镜渐入 */}
       {showIPad && (
         <Suspense fallback={null}>
           <IPadModel
-            screenshot={screenshot5}
-            scale={IPAD_SCALE}
-            position={[ipadX, ipadY, ipadZ]}
-            rotation={[0, -Math.PI / 8, 0]}
+            screenshot={screenshots[ipadState.screenshot]}
+            scale={IPAD_SCALE * ipadState.scale}
+            position={ipadPosition}
+            rotation={ipadState.rot as [number, number, number]}
             hideApplePencil={true}
           />
         </Suspense>
       )}
 
-      {/* 后期处理 - 对比度调整 */}
       <EffectComposer>
-        <BrightnessContrast
-          brightness={0}
-          contrast={0.4}
-        />
+        <BrightnessContrast brightness={0} contrast={0.5} />
       </EffectComposer>
     </ThreeCanvas>
   );

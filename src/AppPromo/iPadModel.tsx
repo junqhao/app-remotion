@@ -84,9 +84,12 @@ export const IPadModel: React.FC<iPadModelProps> = ({
         }
       }
 
-      // 应用贴图到屏幕
+      // 应用贴图到屏幕，并调整 bezel 材质
       if (child instanceof THREE.Mesh) {
         const materialName = child.material?.name?.toLowerCase() || "";
+        const meshName = child.name?.toLowerCase() || "";
+        
+        // 屏幕材质
         if (
           materialName.includes("display") ||
           materialName.includes("screen") ||
@@ -101,13 +104,28 @@ export const IPadModel: React.FC<iPadModelProps> = ({
           const newMaterial = new THREE.MeshStandardMaterial({
             map: clonedTexture,
             color: new THREE.Color(0x000000),
-            roughness: 0.1,
-            metalness: 0.2,
+            roughness: 1.0,
+            metalness: 0,
             emissive: new THREE.Color(0xbebebe),
             emissiveMap: clonedTexture,
-            emissiveIntensity: 1.0,
+            emissiveIntensity: 0.9,
           });
           child.material = newMaterial;
+        }
+        // Bezel 边框材质 - 降低反光
+        else if (
+          materialName.includes("bezel") ||
+          materialName.includes("frame") ||
+          meshName.includes("bezel") ||
+          meshName.includes("frame")
+        ) {
+          const bezelMaterial = new THREE.MeshStandardMaterial({
+            color: new THREE.Color(0x1a1a1a),
+            roughness: 1,
+            metalness: 0,
+            envMapIntensity: 0.2,
+          });
+          child.material = bezelMaterial;
         }
       }
     });
