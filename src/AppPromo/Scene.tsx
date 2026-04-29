@@ -3,7 +3,6 @@ import { useVideoConfig, useCurrentFrame, interpolate, spring } from "remotion";
 import { PhoneModel } from "./PhoneModel";
 import { IPadModel } from "./iPadModel";
 import { Suspense, useEffect } from "react";
-import { Environment } from "@react-three/drei";
 import { EffectComposer, BrightnessContrast } from "@react-three/postprocessing";
 import { useThree } from "@react-three/fiber";
 
