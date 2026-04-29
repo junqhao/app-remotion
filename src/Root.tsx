@@ -3,11 +3,7 @@ import { Composition } from "remotion";
 import { AppPromo } from "./AppPromo";
 
 // 从 Scene.tsx 导入关键帧配置（需要在 Scene.tsx 中导出）
-import { KEYFRAMES } from "./AppPromo/Scene";
-
-// 根据最后一个关键帧计算总时长
-const LAST_KEYFRAME = KEYFRAMES[KEYFRAMES.length - 1];
-const TOTAL_DURATION = LAST_KEYFRAME.frame;
+import { TOTAL_DURATION } from "./AppPromo/Keyframes";
 
 export const RemotionRoot: React.FC = () => {
   return (
