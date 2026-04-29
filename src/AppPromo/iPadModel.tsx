@@ -1,5 +1,5 @@
-import { useRef, useMemo } from "react";
-import { useGLTF, useTexture } from "@react-three/drei";
+import { useRef, useMemo, useEffect, useState } from "react";
+import { useGLTF } from "@react-three/drei";
 import {
   useCurrentFrame,
   useVideoConfig,
@@ -20,6 +20,45 @@ interface iPadModelProps {
   animationOffset?: number;
 }
 
+// 预加载所有截图 - 在模块级别预加载
+const textureCache: Map<string, THREE.Texture> = new Map();
+const loadingTextures: Set<string> = new Set();
+
+function preloadTexture(url: string): void {
+  if (textureCache.has(url) || loadingTextures.has(url)) return;
+  
+  loadingTextures.add(url);
+  const loader = new THREE.TextureLoader();
+  loader.load(url, (texture) => {
+    texture.flipY = false;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    textureCache.set(url, texture);
+    loadingTextures.delete(url);
+  });
+}
+
+function getTexture(url: string): THREE.Texture {
+  if (textureCache.has(url)) {
+    return textureCache.get(url)!;
+  }
+  
+  // 如果缓存中没有，立即加载并返回临时纹理
+  const loader = new THREE.TextureLoader();
+  const texture = loader.load(url);
+  texture.flipY = false;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  textureCache.set(url, texture);
+  return texture;
+}
+
+// 预加载所有可能用到的截图
+const ALL_SCREENSHOTS = [
+  staticFile("screenshot_6.png"),
+];
+
+// 立即开始预加载
+ALL_SCREENSHOTS.forEach(preloadTexture);
+
 export const IPadModel: React.FC<iPadModelProps> = ({
   screenshot,
   scale: baseScale,
@@ -33,10 +72,30 @@ export const IPadModel: React.FC<iPadModelProps> = ({
   const ipadRef = useRef<THREE.Group>(null);
 
   const { scene } = useGLTF(ipadModel);
-  const texture = useTexture(screenshot);
+  
+  // 使用缓存的 texture
+  const texture = getTexture(screenshot);
 
-  // 修复贴图方向
-  texture.flipY = false;
+  // 截图切换检测 - 使用 ref 避免不必要的重渲染
+  const [prevScreenshot, setPrevScreenshot] = useState(screenshot);
+  const [transitionStartFrame, setTransitionStartFrame] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (screenshot !== prevScreenshot) {
+      setPrevScreenshot(screenshot);
+      setTransitionStartFrame(frame);
+    }
+  }, [screenshot, prevScreenshot, frame]);
+
+  // 计算过渡进度 - 基于帧数而不是 setTimeout
+  const TRANSITION_DURATION = 8; // 8帧完成过渡 (约267ms @ 30fps)
+  const transitionProgress = useMemo(() => {
+    if (transitionStartFrame === null) return 1;
+    const elapsed = frame - transitionStartFrame;
+    return Math.min(elapsed / TRANSITION_DURATION, 1);
+  }, [frame, transitionStartFrame]);
+
+  const prevTexture = getTexture(prevScreenshot);
 
   // 悬浮动画
   const floatY = spring({
@@ -66,9 +125,11 @@ export const IPadModel: React.FC<iPadModelProps> = ({
 
   const finalScale = baseScale * entranceScale;
 
-  // 应用贴图到display material，并隐藏 Apple Pencil
+  // 应用贴图到display material，并隐藏 Apple Pencil，支持过渡动画
   const ipadScene = useMemo(() => {
     const clonedScene = scene.clone();
+    const t = transitionProgress;
+    const isTransitioning = t < 1 && prevScreenshot !== screenshot;
 
     clonedScene.traverse((child: THREE.Object3D) => {
       // 隐藏 Apple Pencil
@@ -95,43 +156,90 @@ export const IPadModel: React.FC<iPadModelProps> = ({
           materialName.includes("screen") ||
           materialName.includes("glass")
         ) {
-          // 克隆纹理并水平翻转
-          const clonedTexture = texture.clone();
-          clonedTexture.center = new THREE.Vector2(0.5, 0.5);
-          clonedTexture.rotation = 0;
-          clonedTexture.repeat.set(-1, 1); // 水平翻转
-          
-          const newMaterial = new THREE.MeshStandardMaterial({
-            map: clonedTexture,
-            color: new THREE.Color(0x000000),
-            roughness: 1.0,
-            metalness: 0,
-            emissive: new THREE.Color(0xbebebe),
-            emissiveMap: clonedTexture,
-            emissiveIntensity: 0.9,
-          });
-          child.material = newMaterial;
-        }
-        // Bezel 边框材质 - 降低反光
-        else if (
-          materialName.includes("bezel") ||
-          materialName.includes("frame") ||
-          meshName.includes("bezel") ||
-          meshName.includes("frame")
-        ) {
-          const bezelMaterial = new THREE.MeshStandardMaterial({
-            color: new THREE.Color(0x1a1a1a),
-            roughness: 1,
-            metalness: 0,
-            envMapIntensity: 0.2,
-          });
-          child.material = bezelMaterial;
+          // 防止递归：如果发现已经是克隆出来的辅助 Mesh，跳过它
+          if (child.userData.isPrevMesh) return;
+
+          if (isTransitioning && prevTexture) {
+            // 寻找或创建"旧图层"
+            let prevMesh = child.getObjectByName("prevDisplayMesh") as THREE.Mesh;
+            
+            if (!prevMesh) {
+              prevMesh = child.clone();
+              prevMesh.name = "prevDisplayMesh";
+              prevMesh.userData.isPrevMesh = true;
+              // 微移防止 Z-Fighting
+              prevMesh.position.z += 0.001;
+              child.add(prevMesh);
+            }
+
+            // 配置旧图材质 (淡出)
+            const clonedPrevTexture = prevTexture.clone();
+            clonedPrevTexture.center = new THREE.Vector2(0.5, 0.5);
+            clonedPrevTexture.rotation = 0;
+            clonedPrevTexture.repeat.set(-1, 1);
+            
+            prevMesh.material = new THREE.MeshStandardMaterial({
+              map: clonedPrevTexture,
+              color: new THREE.Color(0x000000),
+              roughness: 1.0,
+              metalness: 0,
+              emissive: new THREE.Color(0xbebebe),
+              emissiveMap: clonedPrevTexture,
+              emissiveIntensity: 0.9,
+              transparent: true,
+              opacity: 1 - t,
+              depthWrite: false,
+            });
+
+            // 配置新图材质 (淡入)
+            const clonedTexture = texture.clone();
+            clonedTexture.center = new THREE.Vector2(0.5, 0.5);
+            clonedTexture.rotation = 0;
+            clonedTexture.repeat.set(-1, 1);
+            
+            child.material = new THREE.MeshStandardMaterial({
+              map: clonedTexture,
+              color: new THREE.Color(0x000000),
+              roughness: 1.0,
+              metalness: 0,
+              emissive: new THREE.Color(0xbebebe),
+              emissiveMap: clonedTexture,
+              emissiveIntensity: 0.9,
+              transparent: true,
+              opacity: t,
+              depthWrite: false,
+            });
+          } else {
+            // 过渡结束后，清理辅助 Mesh
+            const oldPrev = child.getObjectByName("prevDisplayMesh");
+            if (oldPrev) {
+              child.remove(oldPrev);
+            }
+
+            // 克隆纹理并水平翻转
+            const clonedTexture = texture.clone();
+            clonedTexture.center = new THREE.Vector2(0.5, 0.5);
+            clonedTexture.rotation = 0;
+            clonedTexture.repeat.set(-1, 1); // 水平翻转
+            
+            const newMaterial = new THREE.MeshStandardMaterial({
+              map: clonedTexture,
+              color: new THREE.Color(0x000000),
+              roughness: 0.2,
+              metalness: 0.8,
+              emissive: new THREE.Color(0xbbbbbb),
+              emissiveMap: clonedTexture,
+              emissiveIntensity: 1,
+              transparent: false,
+            });
+            child.material = newMaterial;
+          }
         }
       }
     });
 
     return clonedScene;
-  }, [scene, texture, hideApplePencil]);
+  }, [scene, texture, prevTexture, transitionProgress, prevScreenshot, screenshot, hideApplePencil]);
 
   return (
     <group

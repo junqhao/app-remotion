@@ -19,20 +19,49 @@ interface PhoneModelProps {
   animationOffset?: number;
 }
 
-// 预加载所有截图
+// 预加载所有截图 - 在模块级别预加载
 const textureCache: Map<string, THREE.Texture> = new Map();
+const loadingTextures: Set<string> = new Set();
+
+function preloadTexture(url: string): void {
+  if (textureCache.has(url) || loadingTextures.has(url)) return;
+  
+  loadingTextures.add(url);
+  const loader = new THREE.TextureLoader();
+  loader.load(url, (texture) => {
+    texture.flipY = false;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    textureCache.set(url, texture);
+    loadingTextures.delete(url);
+  });
+}
 
 function getTexture(url: string): THREE.Texture {
   if (textureCache.has(url)) {
     return textureCache.get(url)!;
   }
   
+  // 如果缓存中没有，立即加载并返回临时纹理
   const loader = new THREE.TextureLoader();
   const texture = loader.load(url);
   texture.flipY = false;
+  texture.colorSpace = THREE.SRGBColorSpace;
   textureCache.set(url, texture);
   return texture;
 }
+
+// 预加载所有可能用到的截图
+const ALL_SCREENSHOTS = [
+  staticFile("screenshot_1.png"),
+  staticFile("screenshot_2.png"),
+  staticFile("screenshot_3.png"),
+  staticFile("screenshot_4.png"),
+  staticFile("screenshot_5.png"),
+  staticFile("screenshot_6.png"),
+];
+
+// 立即开始预加载
+ALL_SCREENSHOTS.forEach(preloadTexture);
 
 export const PhoneModel: React.FC<PhoneModelProps> = ({
   screenshot,
@@ -50,25 +79,24 @@ export const PhoneModel: React.FC<PhoneModelProps> = ({
   // 使用缓存的 texture
   const texture = getTexture(screenshot);
 
-  // 截图切换淡入淡出动画
+  // 截图切换检测 - 使用 ref 避免不必要的重渲染
   const [prevScreenshot, setPrevScreenshot] = useState(screenshot);
-  const [transitionProgress, setTransitionProgress] = useState(1);
+  const [transitionStartFrame, setTransitionStartFrame] = useState<number | null>(null);
 
   useEffect(() => {
     if (screenshot !== prevScreenshot) {
       setPrevScreenshot(screenshot);
-      setTransitionProgress(0);
+      setTransitionStartFrame(frame);
     }
-  }, [screenshot, prevScreenshot]);
+  }, [screenshot, prevScreenshot, frame]);
 
-  useEffect(() => {
-    if (transitionProgress < 1) {
-      const timer = setTimeout(() => {
-        setTransitionProgress((p) => Math.min(p + 0.12, 1));
-      }, 16);
-      return () => clearTimeout(timer);
-    }
-  }, [transitionProgress]);
+  // 计算过渡进度 - 基于帧数而不是 setTimeout
+  const TRANSITION_DURATION = 8; // 8帧完成过渡 (约267ms @ 30fps)
+  const transitionProgress = useMemo(() => {
+    if (transitionStartFrame === null) return 1;
+    const elapsed = frame - transitionStartFrame;
+    return Math.min(elapsed / TRANSITION_DURATION, 1);
+  }, [frame, transitionStartFrame]);
 
   const prevTexture = getTexture(prevScreenshot);
 
@@ -106,60 +134,76 @@ export const PhoneModel: React.FC<PhoneModelProps> = ({
     const t = transitionProgress;
     const isTransitioning = t < 1 && prevScreenshot !== screenshot;
 
-    clonedScene.traverse((child: THREE.Object3D) => {
-      if (child instanceof THREE.Mesh) {
-        const materialName = child.material?.name?.toLowerCase() || "";
-        if (
-          materialName.includes("display") ||
-          materialName.includes("screen") ||
-          materialName.includes("glass")
-        ) {
-          if (isTransitioning) {
-            // 过渡期间：创建两个 mesh 叠加
-            // 旧图 mesh（淡出）
-            const prevMesh = child.clone();
-            prevMesh.material = new THREE.MeshStandardMaterial({
-              map: prevTexture,
-              color: new THREE.Color(0x000000),
-              roughness: 1.0,
-              metalness: 0,
-              emissive: new THREE.Color(0xbebebe),
-              emissiveMap: prevTexture,
-              emissiveIntensity: 0.9,
-              transparent: true,
-              opacity: 1 - t,
-            });
-            prevMesh.renderOrder = child.renderOrder - 1;
-            
-            // 新图 mesh（淡入）
-            child.material = new THREE.MeshStandardMaterial({
-              map: texture,
-              color: new THREE.Color(0x000000),
-              roughness: 1.0,
-              metalness: 0,
-              emissive: new THREE.Color(0xbebebe),
-              emissiveMap: texture,
-              emissiveIntensity: 0.9,
-              transparent: true,
-              opacity: t,
-            });
-            
+    clonedScene.traverse((child: any) => {
+    if (child instanceof THREE.Mesh) {
+      const materialName = child.material?.name?.toLowerCase() || "";
+      if (materialName.includes("display") || materialName.includes("screen")) {
+        
+        // --- 1. 防止递归：如果发现已经是克隆出来的辅助 Mesh，跳过它 ---
+        if (child.userData.isPrevMesh) return;
+
+        if (isTransitioning && prevTexture) {
+          // --- 2. 寻找或创建"旧图层" ---
+          let prevMesh = child.getObjectByName("prevDisplayMesh") as THREE.Mesh;
+          
+          if (!prevMesh) {
+            prevMesh = child.clone();
+            prevMesh.name = "prevDisplayMesh";
+            prevMesh.userData.isPrevMesh = true; // 标记防止递归遍历
+            // 关键：微移 0.1 毫米，彻底解决闪烁 (Z-Fighting)
+            prevMesh.position.z += 0.001; 
             child.add(prevMesh);
-          } else {
-            // 非过渡期间：只显示当前图
-            child.material = new THREE.MeshStandardMaterial({
-              map: texture,
-              color: new THREE.Color(0x000000),
-              roughness: 1.0,
-              metalness: 0,
-              emissive: new THREE.Color(0xbebebe),
-              emissiveMap: texture,
-              emissiveIntensity: 0.9,
-            });
           }
+
+          // --- 3. 配置旧图材质 (淡出) ---
+          prevMesh.material = new THREE.MeshStandardMaterial({
+            map: prevTexture,
+            color: new THREE.Color(0x000000),
+            emissive: new THREE.Color(0xBBBBBB),
+            emissiveMap: prevTexture,
+            emissiveIntensity: 1,
+            roughness: 0.2,
+            metalness: 0.8,
+            transparent: true,
+            opacity: 1 - t, // 随时间从 1 变到 0
+            depthWrite: false, // 关键：关闭深度写入，防止遮挡
+          });
+
+          // --- 4. 配置新图材质 (淡入) ---
+          child.material = new THREE.MeshStandardMaterial({
+            map: texture,
+            color: new THREE.Color(0x000000),
+            emissive: new THREE.Color(0xBBBBBB),
+            emissiveMap: texture,
+            emissiveIntensity: 1,
+            roughness: 0.2,
+            metalness: 0.8,
+            transparent: true,
+            opacity: t, // 随时间从 0 变到 1
+            depthWrite: false, // 关键：关闭深度写入
+          });
+
+      } else {
+        // --- 5. 过渡结束后，清理辅助 Mesh ---
+        const oldPrev = child.getObjectByName("prevDisplayMesh");
+        if (oldPrev) {
+          child.remove(oldPrev);
         }
+
+        child.material = new THREE.MeshStandardMaterial({
+          map: texture,
+          color: new THREE.Color(0x000000),
+          emissive: new THREE.Color(0xBBBBBB),
+          emissiveMap: texture,
+          emissiveIntensity: 1,
+          roughness: 0.2,
+          metalness: 0.8,
+          transparent: false,
+        });
       }
-    });
+    }
+  }
+});
 
     return clonedScene;
   }, [scene, texture, prevTexture, transitionProgress, prevScreenshot, screenshot]);

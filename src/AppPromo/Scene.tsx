@@ -46,17 +46,17 @@ export const KEYFRAMES = [
     scale: 5,
     screenshot: 0,
   },
-  // 第30帧：到达正中
+  // 第60帧：到达正中
   {
-    frame: 45,
+    frame: 60,
     pos: [0, -0.02, 0],
     rot: [0, 0, 0],
     scale: 1,
     screenshot: 0,
   },
-  // 第90帧：侧转展示
+  // 第120帧：侧转展示
   {
-    frame: 90,
+    frame: 120,
     pos: [0.6, -0.02, 1],
     rot: [0, -Math.PI / 8, 0],
     scale: 0.8,
@@ -64,25 +64,25 @@ export const KEYFRAMES = [
   },
   // 第150帧：倾斜展示
   {
-    frame: 150,
+    frame: 180,
     pos: [-0.6, -0.02, 1],
     rot: [0.1, Math.PI / 8, 0],
     scale: 0.8,
     screenshot: 2,
   },
-  // 第210帧：俯视展示
+  // 第240帧：俯视展示
   {
-    frame: 210,
+    frame: 240,
     pos: [-0.5, -0.02, 2],
     rot: [0, 0, 0],
     scale: 0.6,
     screenshot: 3,
   },
-  // 第270帧：缩小让位给iPad
+  // 第300帧：缩小让位给iPad
   {
-    frame: 270,
+    frame: 300,
     pos: [1.2, -0.3, 0],
-    rot: [0, -Math.PI / 6, 0],
+    rot: [0, -Math.PI / 10, 0],
     scale: 0.6,
     screenshot: 4,
   },
@@ -95,15 +95,15 @@ export const KEYFRAMES = [
 const IPAD_KEYFRAMES = [
   // 第240帧：从屏幕左侧外开始
   {
-    frame: 210,
+    frame: 240,
     pos: [100, -38, -250],
-    rot: [0, Math.PI / 6, 0],
+    rot: [0, 0, 0],
     scale: 1,
     screenshot: 5, // 使用 screenshots[5]
   },  
-  // 第330帧：保持
+  // 第300帧：保持
   {
-    frame: 270,
+    frame: 300,
     pos: [30, -38, -250],
     rot: [0, Math.PI / 12, 0],
     scale: 1,
@@ -120,11 +120,14 @@ const FLOAT_AMPLITUDE = 0;
 
 // 色调映射
 function ToneMapping() {
-  const { gl } = useThree();
+  const { gl, scene } = useThree();
   useEffect(() => {
     gl.toneMapping = THREE.ACESFilmicToneMapping;
     gl.toneMappingExposure = 0.8;
-  }, [gl]);
+    // 设置透明背景
+    scene.background = null;
+    gl.setClearColor(0x000000, 0);
+  }, [gl, scene]);
   return null;
 }
 
@@ -210,7 +213,7 @@ function getInterpolatedValue(frame: number, keyframes: Keyframe[]) {
 // ============================================
 
 export const Scene: React.FC<SceneProps> = ({ screenshots }) => {
-  const { width, height, fps } = useVideoConfig();
+  const { width, height } = useVideoConfig();
   const frame = useCurrentFrame();
 
   // 获取 iPhone 当前帧的插值状态
@@ -242,19 +245,31 @@ export const Scene: React.FC<SceneProps> = ({ screenshots }) => {
       gl={{
         antialias: true,
         alpha: true,
+        premultipliedAlpha: false,
+        preserveDrawingBuffer: true,
         toneMapping: THREE.ACESFilmicToneMapping,
         toneMappingExposure: 1.0,
       }}
+      frameloop="demand" // 确保每帧完整渲染，防止导出时闪黑
     >
       <ToneMapping />
 
-      {/* 方向光和其他光源已注释，只用环境光
-      <ambientLight intensity={0.3} />
-      <directionalLight position={[-5, 5, 5]} intensity={0.8} castShadow />
-      <pointLight position={[5, 3, -5]} intensity={0.2} />
-      <pointLight position={[-5, -3, -5]} intensity={0.2} />
-      */}
-      <Environment preset="studio" />
+      {/* 1. 环境光：提供基础亮度，防止背光面死黑 */}
+    <ambientLight intensity={10} />
+
+      {/* 2. 主光源 (关键)：放在左上方 (-X, +Y) */}
+      <directionalLight 
+        position={[-5, 10, 5]} 
+        intensity={5} 
+        castShadow // 如果需要阴影
+      />
+
+      {/* 3. 补光灯：放在稍微偏右的位置，亮度调低，增加立体感 */}
+      <pointLight 
+        position={[5, 5, 2]} 
+        intensity={5} 
+        decay={2} // 物理衰减
+      />
 
       <Suspense fallback={null}>
         <PhoneModel
@@ -278,7 +293,7 @@ export const Scene: React.FC<SceneProps> = ({ screenshots }) => {
       )}
 
       <EffectComposer>
-        <BrightnessContrast brightness={0} contrast={0.5} />
+        <BrightnessContrast brightness={0.1} contrast={0.2} />
       </EffectComposer>
     </ThreeCanvas>
   );

@@ -12,14 +12,14 @@ const TOTAL_DURATION = LAST_KEYFRAME.frame;
 export const RemotionRoot: React.FC = () => {
   return (
     <>
-      {/* App宣传视频 - 动态时长根据关键帧 */}
+      {/* App宣传视频 - 动态时长根据关键帧 - 2K分辨率 */}
       <Composition
         id="AppPromo"
         component={AppPromo}
         durationInFrames={TOTAL_DURATION}
         fps={30}
-        width={1920}
-        height={1080}
+        width={2560}
+        height={1440}
       />
     </>
   );

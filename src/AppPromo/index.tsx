@@ -21,7 +21,7 @@ export const AppPromo: React.FC = () => {
   return (
     <AbsoluteFill
       style={{
-        background: "#1ad226ff", // 白色背景，需要透明时改为 "transparent"
+        background: "transparent", // 透明背景
       }}
     >
       <Scene screenshots={screenshots} />
