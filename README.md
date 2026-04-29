@@ -33,7 +33,8 @@ A Remotion + React Three Fiber based App promotional video generation tool, supp
 src/
 ├── AppPromo/
 │   ├── index.tsx          # Main entry component, transparent background setup
-│   ├── Scene.tsx          # 3D scene configuration, keyframe animations
+│   ├── Scene.tsx          # 3D scene component, uses processed keyframes
+│   ├── Keyframes.tsx      # Keyframe definitions and interpolation logic
 │   ├── PhoneModel.tsx     # iPhone 3D model component
 │   └── iPadModel.tsx      # iPad 3D model component
 ├── Root.tsx               # Remotion Composition config (resolution, fps, etc.)
@@ -87,29 +88,40 @@ npx remotion still AppPromo frame.png --frame=60
 
 **Resolution Settings** - Edit `src/Root.tsx`:
 ```tsx
+import { TOTAL_DURATION } from "./AppPromo/Keyframes";
+
 <Composition
   id="AppPromo"
   component={AppPromo}
-  durationInFrames={300}  // Total duration (frames)
-  fps={30}                 // Frame rate
-  width={2560}             // Width (2K)
-  height={1440}            // Height (2K)
+  durationInFrames={TOTAL_DURATION}  // Auto-calculated duration
+  fps={30}                            // Frame rate
+  width={2560}                        // Width (2K)
+  height={1440}                       // Height (2K)
 />
 ```
 
-**Keyframe Animation** - Edit `src/AppPromo/Scene.tsx`:
+`TOTAL_DURATION` is automatically calculated based on keyframe configurations, taking the maximum of iPhone and iPad timelines.
+
+**Keyframe Animation** - Edit `src/AppPromo/Keyframes.tsx`:
 ```tsx
-export const KEYFRAMES = [
+export const KEYFRAMES: KeyframeBase[] = [
   {
-    frame: 0,                    // Time point (frame)
-    pos: [0, -1, 0],            // Position [x, y, z]
-    rot: [-3, 0, 0],            // Rotation [x, y, z] (radians)
-    scale: 5,                    // Scale
-    screenshot: 0,               // Index of screenshots array
+    duration: 30,               // Animation duration (frames)
+    hold: 45,                   // Hold time after reaching (frames)
+    pos: [0, -0.02, 0],        // Position [x, y, z]
+    rot: [0, 0, 0],            // Rotation [x, y, z] (radians)
+    scale: 1,                   // Scale
+    screenshot: 0,              // Index of screenshots array
   },
   // ... more keyframes
 ];
 ```
+
+**Keyframe System Explanation**:
+- `duration`: Time to animate to this state from previous state
+- `hold`: Time to hold this state before next animation starts
+- The system automatically calculates absolute frame positions (`absStartFrame`, `absEndFrame`, `absHoldFrame`)
+- Spring animation creates natural overshoot effects for bouncy transitions
 
 **Transparent Channel** - Edit `remotion.config.ts`:
 ```ts
@@ -150,6 +162,15 @@ Config.setProResProfile("4444");         // ProRes 4444 supports transparency
 <EffectComposer>
   <BrightnessContrast brightness={0.1} contrast={0.2} />
 </EffectComposer>
+```
+
+**Scene Component Structure** - `src/AppPromo/Scene.tsx` now imports processed timelines from `Keyframes.tsx`:
+```tsx
+import { PROCESSED_PHONE, PROCESSED_IPAD, getInterpolatedValue } from "./Keyframes";
+
+// Usage in component
+const phone = getInterpolatedValue(frame, PROCESSED_PHONE);
+const ipad = getInterpolatedValue(frame, PROCESSED_IPAD);
 ```
 
 **Material Reflection** - Edit `src/AppPromo/PhoneModel.tsx` or `iPadModel.tsx`:
@@ -209,7 +230,8 @@ Place the following files in `public/` directory:
 src/
 ├── AppPromo/
 │   ├── index.tsx          # 主入口组件，透明背景设置
-│   ├── Scene.tsx          # 3D 场景配置，关键帧动画
+│   ├── Scene.tsx          # 3D 场景组件，使用处理后的关键帧
+│   ├── Keyframes.tsx      # 关键帧定义和插值逻辑
 │   ├── PhoneModel.tsx     # iPhone 3D 模型组件
 │   └── iPadModel.tsx      # iPad 3D 模型组件
 ├── Root.tsx               # Remotion Composition 配置（分辨率、帧率等）
@@ -263,29 +285,40 @@ npx remotion still AppPromo frame.png --frame=60
 
 **分辨率设置** - 编辑 `src/Root.tsx`：
 ```tsx
+import { TOTAL_DURATION } from "./AppPromo/Keyframes";
+
 <Composition
   id="AppPromo"
   component={AppPromo}
-  durationInFrames={300}  // 总时长（帧）
-  fps={30}                 // 帧率
-  width={2560}             // 宽度（2K）
-  height={1440}            // 高度（2K）
+  durationInFrames={TOTAL_DURATION}  // 自动计算总时长
+  fps={30}                            // 帧率
+  width={2560}                        // 宽度（2K）
+  height={1440}                       // 高度（2K）
 />
 ```
 
-**关键帧动画配置** - 编辑 `src/AppPromo/Scene.tsx`：
+`TOTAL_DURATION` 会根据关键帧配置自动计算，取 iPhone 和 iPad 时间线的最大值。
+
+**关键帧动画配置** - 编辑 `src/AppPromo/Keyframes.tsx`：
 ```tsx
-export const KEYFRAMES = [
+export const KEYFRAMES: KeyframeBase[] = [
   {
-    frame: 0,                    // 时间点（帧）
-    pos: [0, -1, 0],            // 位置 [x, y, z]
-    rot: [-3, 0, 0],            // 旋转 [x, y, z]（弧度）
-    scale: 5,                    // 缩放
-    screenshot: 0,               // 使用 screenshots 数组的索引
+    duration: 30,               // 动画持续时间（帧）
+    hold: 45,                   // 到达后停留时间（帧）
+    pos: [0, -0.02, 0],        // 位置 [x, y, z]
+    rot: [0, 0, 0],            // 旋转 [x, y, z]（弧度）
+    scale: 1,                   // 缩放
+    screenshot: 0,              // 使用 screenshots 数组的索引
   },
   // ... 更多关键帧
 ];
 ```
+
+**关键帧系统说明**：
+- `duration`：从前一状态动画到当前状态的耗时
+- `hold`：到达当前状态后停留的时间，之后才开始下一段动画
+- 系统自动计算绝对帧位置（`absStartFrame`、`absEndFrame`、`absHoldFrame`）
+- 弹簧动画会产生自然的超调效果，让过渡更有弹性
 
 **透明通道配置** - 编辑 `remotion.config.ts`：
 ```ts
@@ -326,6 +359,15 @@ Config.setProResProfile("4444");         // ProRes 4444 支持透明
 <EffectComposer>
   <BrightnessContrast brightness={0.1} contrast={0.2} />
 </EffectComposer>
+```
+
+**Scene 组件结构** - `src/AppPromo/Scene.tsx` 现在从 `Keyframes.tsx` 导入处理后的时间线：
+```tsx
+import { PROCESSED_PHONE, PROCESSED_IPAD, getInterpolatedValue } from "./Keyframes";
+
+// 在组件中使用
+const phone = getInterpolatedValue(frame, PROCESSED_PHONE);
+const ipad = getInterpolatedValue(frame, PROCESSED_IPAD);
 ```
 
 **材质反光调整** - 编辑 `src/AppPromo/PhoneModel.tsx` 或 `iPadModel.tsx`：
