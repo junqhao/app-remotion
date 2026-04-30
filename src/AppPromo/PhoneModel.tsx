@@ -57,7 +57,6 @@ const ALL_SCREENSHOTS = [
   staticFile("screenshot_3.png"),
   staticFile("screenshot_4.png"),
   staticFile("screenshot_5.png"),
-  staticFile("screenshot_6.png"),
 ];
 
 // 立即开始预加载
